@@ -8,7 +8,16 @@ import pandas as pd
 import numpy as np
 import datetime
 import plotly.graph_objects as go
-from streamlit_autorefresh import st_autorefresh
+import time
+
+# Auto-refresh every 1 hour
+if "last_refresh" not in st.session_state:
+    st.session_state["last_refresh"] = time.time()
+
+if time.time() - st.session_state["last_refresh"] > 3600:  # 1 hour in seconds
+    st.session_state["last_refresh"] = time.time()
+    st.rerun()
+
 
 # Internal imports
 from binance_integration import fetch_klines
