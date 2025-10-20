@@ -39,8 +39,6 @@ st.caption("Live Binance Data — Adaptive PCT + 6H Overlay + Cloud Ready")
 
 # Auto-refresh every 1 hour (3600 * 1000 ms)
 interval_minutes = 60
-st_autorefresh(interval=interval_minutes * 60 * 1000, key="hourly_refresh")
-
 st.sidebar.markdown(f"Auto-refresh every {interval_minutes} minutes")
 
 # ------------------------------------------------------------
