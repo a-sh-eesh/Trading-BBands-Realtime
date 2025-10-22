@@ -26,8 +26,57 @@ from zlema_bbands_trading import (
 # CONFIGURATION
 # --------------------------
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "LTCUSDT",
-]
+# AI & Data-Driven Tokens
+ "APTUSDT",
+    "ARUSDT",
+    "ARBUSDT",
+    "ANKRUSDT",
+    "ASTERUSDT",
+    "BTCUSDT",
+    "BCHUSDT",
+    "BNBUSDT",
+    "ETHUSDT",
+    "ENSUSDT",
+    "ENAUSDT",
+    "INJUSDT",
+    "JUPUSDT",
+    "LTCUSDT",
+    "LPTUSDT",
+    "LDOUSDT",
+    "LINEAUSDT",
+    "PUMPUSDT",
+    "PENDLEUSDT",
+    "SAGAUSDT",
+    "SEIUSDT",
+    "STXUSDT",
+    "TIAUSDT",
+    "TONUSDT",
+    "TAOUSDT",
+    "WLDUSDT",
+    "XRPUSDT",
+    "ZETAUSDT",
+    "AIUSDT", "JASMYUSDT", "GRTUSDT", "MINAUSDT", "FETUSDT", "ICPUSDT",
+
+    # Meme Coins & Community Tokens
+    "MELANIAUSDT", "TRUMPUSDT", "WIFUSDT", "BONKUSDT", "PEPEUSDT",
+    "MYROUSDT", "FLOKIUSDT", "BOMEUSDT", "SHIBUSDT", "DOGEUSDT", "BRETTUSDT",
+
+    # Decentralized Finance (DeFi)
+    "SNXUSDT", "ETHFIUSDT", "RUNEUSDT", "BAKEUSDT", "LDOUSDT", "CRVUSDT",
+    "COMPUSDT", "ONDOUSDT", "DYDXUSDT", "UNIUSDT", "MKRUSDT", "HYPEUSDT",
+
+    # Metaverse & Gaming Tokens
+    "PIXELUSDT", "GALAUSDT", "ILVUSDT", "IMXUSDT", "THETAUSDT",
+    "APEUSDT", "VIRTUALUSDT", "WLFIUSDT",
+
+    # Real-World Asset Integration & Oracles
+    "VETUSDT", "PYTHUSDT", "JTOUSDT", "ROSEUSDT", "OPUSDT",
+    "LINKUSDT", "COTIUSDT",
+
+    # Blockchain Protocols & Layer 1 Networks
+    "FILUSDT", "TRXUSDT", "DOTUSDT", "ADAUSDT", "SOLUSDT", "OMUSDT",
+    "SUIUSDT", "NEARUSDT", "BEAMXUSDT", "ATOMUSDT", "CFXUSDT",
+    "CHZUSDT", "ZILUSDT", "AVAXUSDT",]
 AUTO_REFRESH_SECONDS = 3600
 BATCH_SIZE = 20
 FETCH_DAYS = 30
