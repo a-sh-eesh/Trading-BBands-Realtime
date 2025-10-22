@@ -2,16 +2,15 @@ services:
   - type: web
     name: trading-bbands-dashboard
     runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py
-    plan: free
+    env: python
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
     envVars:
-      - key: BINANCE_API_KEY
-        sync: false
-      - key: BINANCE_API_SECRET
-        sync: false
       - key: TELEGRAM_TOKEN
-        sync: false
+        value: "your_telegram_bot_token"
       - key: TELEGRAM_CHAT_ID
-        sync: false
-    healthCheckPath: /
+        value: "your_telegram_chat_id"
+      - key: BINANCE_API_KEY
+        value: "your_binance_api_key"
+      - key: BINANCE_API_SECRET
+        value: "your_binance_api_secret"
