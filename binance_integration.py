@@ -49,7 +49,8 @@ def fetch_klines(symbol="BTCUSDT", interval="1h", days=30):
     try:
         # Binance allows up to 1000 candles per request
         limit = min(days * 24, 1000)
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+
 
         response = requests.get(url, timeout=10)
         response.raise_for_status()
