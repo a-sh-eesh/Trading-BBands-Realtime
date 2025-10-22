@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: trading-bbands-dashboard
+    runtime: python
+    env: python
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: TELEGRAM_TOKEN
+        value: "your_telegram_bot_token"
+      - key: TELEGRAM_CHAT_ID
+        value: "your_telegram_chat_id"
+      - key: BINANCE_API_KEY
+        value: "your_binance_api_key"
+      - key: BINANCE_API_SECRET
+        value: "your_binance_api_secret"
