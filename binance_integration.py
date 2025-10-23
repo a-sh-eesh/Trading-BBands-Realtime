@@ -15,12 +15,11 @@ try:
 except ImportError:
     st = None
 
-# ------------------------------------------------------------
-# Load environment and Streamlit secrets
-# ------------------------------------------------------------
 load_dotenv()
 
-
+# ------------------------------------------------------------
+# Get secret from Streamlit or .env
+# ------------------------------------------------------------
 def get_secret(key):
     """Return Streamlit secret or .env variable (safe fallback)."""
     if st and hasattr(st, "secrets"):
@@ -124,7 +123,6 @@ def fetch_klines(
                     df.set_index("close_time", inplace=True)
                     df.sort_index(inplace=True)
 
-                    # Return immediately when data is valid
                     return df
 
                 except requests.exceptions.RequestException as re:
@@ -136,7 +134,6 @@ def fetch_klines(
                     time.sleep(1.5 * (attempt + 1))
                     continue
 
-        # All endpoints failed
         if st:
             st.error(f"Binance API error for {symbol}: {last_error}")
         return pd.DataFrame()
