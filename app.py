@@ -155,9 +155,10 @@ try:
     df = compute_indicators(df)
     df = compute_adaptive_pct(df)
     df = compute_4h_overlay(df)
-    df = apply_zones(df)
+    df = apply_zones(df, phase, trend)
     df = evaluate_candles(df, phase, trend)
     df = validate_trend(df)
+
 except Exception as e:
     st.error(f"Indicator computation failed: {e}")
     st.stop()
