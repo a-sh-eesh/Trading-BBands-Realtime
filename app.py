@@ -328,65 +328,120 @@ else:
     st.write(f"Last Signal: {latest.get('entry_signal', 'NONE')} | Updated: {latest['open_time']}")
 
     # --- CHART ---
-    fig = go.Figure()
+fig = go.Figure()
 
-    # Candlesticks
-    fig.add_trace(go.Candlestick(
-        x=df["open_time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-        name="Candles"
-    ))
+# --- 4H Overlay Bands (shaded region) ---
+if all(col in df.columns for col in ["upper_band_4h", "lower_band_4h", "zlema_4h"]):
+    df_4h = df.dropna(subset=["upper_band_4h", "lower_band_4h"])
+    if not df_4h.empty:
+        fig.add_trace(go.Scatter(
+            x=df_4h["open_time"],
+            y=df_4h["upper_band_4h"],
+            mode="lines",
+            line=dict(width=1, color="violet"),
+            name="4H Upper Band"
+        ))
+        fig.add_trace(go.Scatter(
+            x=df_4h["open_time"],
+            y=df_4h["lower_band_4h"],
+            mode="lines",
+            line=dict(width=1, color="violet"),
+            name="4H Lower Band",
+            fill="tonexty",
+            fillcolor="rgba(138,43,226,0.08)"
+        ))
+        fig.add_trace(go.Scatter(
+            x=df_4h["open_time"],
+            y=df_4h["zlema_4h"],
+            mode="lines",
+            line=dict(color="violet", width=1.2, dash="dot"),
+            name="ZLEMA 4H"
+        ))
 
-    # ZLEMA
+# --- 1H Bollinger Bands (LINES ONLY – no shaded fill) ---
+if "upper_band" in df.columns and "lower_band" in df.columns:
+    df_boll = df.dropna(subset=["upper_band", "lower_band"]).copy()
+    if not df_boll.empty:
+        fig.add_trace(go.Scatter(
+            x=df_boll["open_time"],
+            y=df_boll["upper_band"],
+            mode="lines",
+            line=dict(width=1, color="cornflowerblue"),
+            name="1H Upper Band"
+        ))
+        fig.add_trace(go.Scatter(
+            x=df_boll["open_time"],
+            y=df_boll["lower_band"],
+            mode="lines",
+            line=dict(width=1, color="cornflowerblue"),
+            name="1H Lower Band"
+        ))
+
+# --- ZLEMA Line (main trend line) ---
+if "zlema" in df.columns:
     fig.add_trace(go.Scatter(
-        x=df["open_time"], y=df["zlema"], mode="lines", name="ZLEMA", line=dict(color="orange", width=1.4)
+        x=df["open_time"], y=df["zlema"],
+        mode="lines", name="ZLEMA (1H)",
+        line=dict(color="orange", width=1.4)
     ))
 
-    # 1H Bollinger Bands
-    if all(col in df.columns for col in ["upper_band", "lower_band"]):
+# --- Candlesticks (on top of all bands) ---
+fig.add_trace(go.Candlestick(
+    x=df["open_time"],
+    open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+    name="Candles"
+))
+
+# --- Zones (Buy/Sell areas) ---
+if phase != "TTR" and all(col in df.columns for col in ["buy_zone_lower", "buy_zone_upper"]):
+    df_buy = df.dropna(subset=["buy_zone_lower", "buy_zone_upper"])
+    if not df_buy.empty:
         fig.add_trace(go.Scatter(
-            x=pd.concat([df["open_time"], df["open_time"][::-1]]),
-            y=pd.concat([df["upper_band"], df["lower_band"][::-1]]),
-            fill="toself", fillcolor="rgba(100,149,237,0.1)", line=dict(width=0), name="1H Bollinger Band"
+            x=pd.concat([df_buy["open_time"], df_buy["open_time"][::-1]]),
+            y=pd.concat([df_buy["buy_zone_lower"], df_buy["buy_zone_upper"][::-1]]),
+            fill="toself", fillcolor="rgba(0,255,0,0.08)",
+            line=dict(width=0), name="Buy Zone"
         ))
 
-    # 4H Overlay Bands
-    if all(col in df.columns for col in ["upper_band_4h", "lower_band_4h", "zlema_4h"]):
+if phase != "TTR" and all(col in df.columns for col in ["sell_zone_lower", "sell_zone_upper"]):
+    df_sell = df.dropna(subset=["sell_zone_lower", "sell_zone_upper"])
+    if not df_sell.empty:
         fig.add_trace(go.Scatter(
-            x=pd.concat([df["open_time"], df["open_time"][::-1]]),
-            y=pd.concat([df["upper_band_4h"], df["lower_band_4h"][::-1]]),
-            fill="toself", fillcolor="rgba(138,43,226,0.08)", line=dict(width=0), name="4H Overlay Band"
-        ))
-        fig.add_trace(go.Scatter(
-            x=df["open_time"], y=df["zlema_4h"], mode="lines",
-            line=dict(color="violet", width=1.2), name="ZLEMA 4H"
+            x=pd.concat([df_sell["open_time"], df_sell["open_time"][::-1]]),
+            y=pd.concat([df_sell["sell_zone_lower"], df_sell["sell_zone_upper"][::-1]]),
+            fill="toself", fillcolor="rgba(255,0,0,0.08)",
+            line=dict(width=0), name="Sell Zone"
         ))
 
-    # Zones
-    if phase != "TTR" and "buy_zone_lower" in df.columns and "buy_zone_upper" in df.columns:
-        fig.add_trace(go.Scatter(
-            x=pd.concat([df["open_time"], df["open_time"][::-1]]),
-            y=pd.concat([df["buy_zone_lower"], df["buy_zone_upper"][::-1]]),
-            fill="toself", fillcolor="rgba(0,255,0,0.08)", line=dict(width=0), name="Buy Zone"
-        ))
-    if phase != "TTR" and "sell_zone_lower" in df.columns and "sell_zone_upper" in df.columns:
-        fig.add_trace(go.Scatter(
-            x=pd.concat([df["open_time"], df["open_time"][::-1]]),
-            y=pd.concat([df["sell_zone_lower"], df["sell_zone_upper"][::-1]]),
-            fill="toself", fillcolor="rgba(255,0,0,0.08)", line=dict(width=0), name="Sell Zone"
-        ))
-
-    # Entry markers
+# --- Entry Markers (Buy/Sell arrows) ---
+if "entry_signal" in df.columns:
     buys = df[df["entry_signal"] == "BUY"]
     sells = df[df["entry_signal"] == "SELL"]
+
     if not buys.empty:
-        fig.add_trace(go.Scatter(x=buys["open_time"], y=buys["low"] * 0.995, mode="markers",
-                                 marker=dict(symbol="triangle-up", color="lime", size=9), name="BUY"))
+        fig.add_trace(go.Scatter(
+            x=buys["open_time"], y=buys["low"] * 0.995,
+            mode="markers", marker=dict(symbol="triangle-up", color="lime", size=9),
+            name="BUY Signal"
+        ))
     if not sells.empty:
-        fig.add_trace(go.Scatter(x=sells["open_time"], y=sells["high"] * 1.005, mode="markers",
-                                 marker=dict(symbol="triangle-down", color="red", size=9), name="SELL"))
+        fig.add_trace(go.Scatter(
+            x=sells["open_time"], y=sells["high"] * 1.005,
+            mode="markers", marker=dict(symbol="triangle-down", color="red", size=9),
+            name="SELL Signal"
+        ))
 
-    fig.update_layout(template="plotly_dark", height=550, xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True)
+# --- Layout and Display ---
+fig.update_layout(
+    template="plotly_dark",
+    height=550,
+    xaxis_rangeslider_visible=False,
+    showlegend=True,
+    legend=dict(
+        orientation="h",
+        yanchor="bottom", y=1.02,
+        xanchor="right", x=1
+    )
+)
 
-st.markdown("---")
-st.caption("ZLEMA Bollinger System © 2025 — On-demand Fetch + Bollinger + 4H Overlay + Telegram Alerts")
+st.plotly_chart(fig, use_container_width=True)
