@@ -4,15 +4,16 @@
 
 import os
 import time
+from datetime import datetime, timedelta
+
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# Optional Streamlit support
+# Optional Streamlit support (kept optional so module can be imported in non-streamlit contexts)
 try:
     import streamlit as st
-except ImportError:
+except Exception:
     st = None
 
 load_dotenv()
@@ -24,7 +25,10 @@ def get_secret(key):
     """Return Streamlit secret or .env variable (safe fallback)."""
     if st and hasattr(st, "secrets"):
         try:
-            if key in st.secrets.get("general", {}):
+            # support both flat and [general] style
+            if key in st.secrets:
+                return st.secrets[key]
+            if "general" in st.secrets and key in st.secrets.get("general", {}):
                 return st.secrets["general"][key]
         except Exception:
             pass
@@ -40,32 +44,37 @@ BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
 ]
 
-
 # ------------------------------------------------------------
 # Fetch Historical Klines (with regional fallback)
 # ------------------------------------------------------------
-@st.cache_data(show_spinner=False, ttl=1800)
-def fetch_klines(
-    symbol="BTCUSDT",
-    interval="1h",
-    days=30,
-    incremental=False,
-    last_timestamp=None,
-    max_retries=3,
-):
+# Use a safe cache if Streamlit present; otherwise, behave as plain function.
+if st:
+    @st.cache_data(show_spinner=False, ttl=1800)
+    def fetch_klines(
+        symbol="BTCUSDT",
+        interval="1h",
+        days=30,
+        incremental=False,
+        last_timestamp=None,
+        max_retries=3,
+    ):
+        return _fetch_klines_impl(symbol, interval, days, incremental, last_timestamp, max_retries)
+else:
+    def fetch_klines(
+        symbol="BTCUSDT",
+        interval="1h",
+        days=30,
+        incremental=False,
+        last_timestamp=None,
+        max_retries=3,
+    ):
+        return _fetch_klines_impl(symbol, interval, days, incremental, last_timestamp, max_retries)
+
+
+def _fetch_klines_impl(symbol, interval, days, incremental, last_timestamp, max_retries):
     """
-    Fetch historical candlestick (kline) data with geo-block fallback.
-
-    Args:
-        symbol (str): Trading pair, e.g., "BTCUSDT"
-        interval (str): Candle interval, e.g., "1h"
-        days (int): Number of days for full history
-        incremental (bool): Fetch only candles after last_timestamp if True
-        last_timestamp (int): Milliseconds timestamp of last candle
-        max_retries (int): Retry count per endpoint
-
-    Returns:
-        pd.DataFrame: Cleaned dataframe with OHLCV + timestamps.
+    Internal implementation to fetch klines with endpoint fallback.
+    Always returns a pandas.DataFrame (possibly empty) and never raises RequestExceptions outward.
     """
     try:
         start_time = (
@@ -86,20 +95,20 @@ def fetch_klines(
         for attempt in range(max_retries):
             for base_url in BINANCE_ENDPOINTS:
                 try:
-                    url = base_url
-                    response = requests.get(url, params=params, timeout=10)
+                    resp = requests.get(base_url, params=params, timeout=10)
 
-                    # Handle geo-block (HTTP 451) or forbidden
-                    if response.status_code in (451, 403):
+                    # If geo-block / unavailable for legal reasons or forbidden, try next endpoint
+                    if resp.status_code in (451, 403):
+                        last_error = requests.HTTPError(f"{resp.status_code} for url: {resp.url}")
                         continue
 
-                    response.raise_for_status()
-                    data = response.json()
+                    resp.raise_for_status()
+                    data = resp.json()
 
                     if not isinstance(data, list) or len(data) == 0:
+                        last_error = None  # empty but valid
                         continue
 
-                    # Build dataframe
                     df = pd.DataFrame(
                         data,
                         columns=[
@@ -109,6 +118,7 @@ def fetch_klines(
                         ],
                     )
 
+                    # Convert timestamps and numeric columns
                     df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
                     df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
 
@@ -127,6 +137,7 @@ def fetch_klines(
 
                 except requests.exceptions.RequestException as re:
                     last_error = re
+                    # backoff
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 except Exception as e:
@@ -134,11 +145,28 @@ def fetch_klines(
                     time.sleep(1.5 * (attempt + 1))
                     continue
 
+        # If we reach here, either we had errors or no endpoint returned data
         if st:
-            st.error(f"Binance API error for {symbol}: {last_error}")
+            if last_error:
+                st.error(f"Public Binance API error for {symbol}: {last_error}")
+            else:
+                st.warning(f"{symbol} initial fetch returned no data from public endpoints.")
         return pd.DataFrame()
 
     except Exception as e:
         if st:
             st.error(f"Unexpected error while fetching {symbol}: {e}")
         return pd.DataFrame()
+
+
+# ------------------------------------------------------------
+# (Optional) local test entrypoint
+# ------------------------------------------------------------
+if __name__ == "__main__":
+    # quick local smoke test when running this file directly
+    symbol = "BTCUSDT"
+    print(f"Testing fetch_klines for {symbol} ...")
+    df_test = fetch_klines(symbol=symbol, interval="1h", days=3)
+    print("Rows:", len(df_test))
+    if not df_test.empty:
+        print(df_test.tail())
