@@ -1,6 +1,5 @@
 # ============================================================
 # Binance Integration (Public REST API – Streamlit Compatible)
-# Incremental and Full Fetch Support
 # ============================================================
 
 import os
@@ -27,67 +26,64 @@ def get_secret(key):
         return st.secrets["general"][key]
     return os.getenv(key)
 
+# Load keys (kept for compatibility, not required for public API)
+BINANCE_API_KEY = get_secret("BINANCE_API_KEY")
+BINANCE_API_SECRET = get_secret("BINANCE_API_SECRET")
+
 # ------------------------------------------------------------
-# Fetch Historical + Incremental Klines (Public API)
+# Fetch Historical Klines (Public API only)
 # ------------------------------------------------------------
-def fetch_klines(symbol="BTCUSDT", interval="1h", days=30, start_time=None, end_time=None):
+def fetch_klines(symbol="BTCUSDT", interval="1h", days=30):
     """
-    Fetch candlestick (kline) data from Binance REST API.
-    Supports both full (days-based) and incremental (start_time/end_time) fetching.
-    Returns guaranteed columns ['open_time', 'open', 'high', 'low', 'close', 'volume'].
+    Fetch historical candlestick (kline) data using Binance's public REST API.
+    Works globally without needing API keys or authentication.
+
+    Args:
+        symbol (str): Trading pair, e.g., "BTCUSDT"
+        interval (str): Candle interval, e.g., "1h", "4h", "1d"
+        days (int): Approx number of days to fetch (limited to 1000 candles)
+
+    Returns:
+        pd.DataFrame: DataFrame with columns ['open_time', 'open', 'high', 'low', 'close', 'volume']
     """
     try:
-        base_url = "https://api.binance.com/api/v3/klines"
-        params = {"symbol": symbol.upper(), "interval": interval, "limit": 1000}
+        # Binance allows up to 1000 candles per request
+        limit = min(days * 24, 1000)
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
 
-        # If incremental fetch requested, convert times to ms timestamps
-        if start_time:
-            params["startTime"] = int(pd.Timestamp(start_time).timestamp() * 1000)
-        if end_time:
-            params["endTime"] = int(pd.Timestamp(end_time).timestamp() * 1000)
-
-        # Default days fetch (if no incremental range given)
-        if not start_time and days:
-            limit = min(days * 24, 1000)
-            params["limit"] = limit
-
-        response = requests.get(base_url, params=params, timeout=15)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
 
-        # Handle empty or invalid response
         if not data or len(data) == 0:
-            print(f"[{symbol}] No data returned from Binance API.")
-            return pd.DataFrame(columns=["open_time", "open", "high", "low", "close", "volume"])
+            print(f"No data returned for {symbol}.")
+            return pd.DataFrame()
 
-        # Convert to DataFrame
-        df = pd.DataFrame(data)
-        if df.shape[1] < 6:
-            print(f"[{symbol}] Unexpected Binance data structure: {df.shape}")
-            return pd.DataFrame(columns=["open_time", "open", "high", "low", "close", "volume"])
-
-        # Explicitly assign columns
-        df.columns = [
-            "open_time", "open", "high", "low", "close", "volume",
-            "close_time", "quote_asset_volume", "num_trades",
-            "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore"
-        ]
+        # Convert API response into DataFrame
+        df = pd.DataFrame(
+            data,
+            columns=[
+                "open_time", "open", "high", "low", "close", "volume",
+                "close_time", "quote_asset_volume", "num_trades",
+                "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore",
+            ],
+        )
 
         # Convert datatypes
-        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
         numeric_cols = ["open", "high", "low", "close", "volume"]
         df[numeric_cols] = df[numeric_cols].astype(float)
 
-        # Keep only the needed columns
+        # Return the key columns expected by your trading system
         df = df[["open_time", "open", "high", "low", "close", "volume"]]
 
-        print(f"[{symbol}] Data fetched successfully: {len(df)} candles.")
+        print(f"Data fetched successfully for {symbol} ({len(df)} rows).")
         return df
 
     except Exception as e:
-        print(f"❌ Binance fetch failed for {symbol}: {e}")
+        print(f"Public Binance API error for {symbol}: {e}")
         time.sleep(2)
-        return pd.DataFrame(columns=["open_time", "open", "high", "low", "close", "volume"])
+        return pd.DataFrame()
 
 # ------------------------------------------------------------
 # Optional: Local test (run this file alone to verify data)
