@@ -81,17 +81,8 @@ def fetch_klines(symbol="BTCUSDT", interval="1h", days=30):
         return df
 
     except Exception as e:
-        print(f"Public Binance API error for {symbol}: {e}")
-        time.sleep(2)
+        print(f"fetch_klines() failed for {symbol}: {e}")
         return pd.DataFrame()
-
-# ------------------------------------------------------------
-# Optional: Local test (run this file alone to verify data)
-# ------------------------------------------------------------
-if __name__ == "__main__":
-    symbol = "BTCUSDT"
-    df = fetch_klines(symbol=symbol, interval="1h", days=10)
-    print(df.tail())
 
 
 # ------------------------------------------------------------
@@ -120,9 +111,13 @@ def fetch_klines_incremental(symbol="BTCUSDT", interval="1h", since=None, limit=
                 "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore",
             ],
         )
+
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
-        df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
+        df[["open", "high", "low", "close", "volume"]] = df[
+            ["open", "high", "low", "close", "volume"]
+        ].astype(float)
         df = df[["open_time", "open", "high", "low", "close", "volume"]]
+
         print(f"Incremental data fetched for {symbol}: {len(df)} new rows.")
         return df
 
