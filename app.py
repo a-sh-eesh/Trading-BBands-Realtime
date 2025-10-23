@@ -1,6 +1,5 @@
 # ============================================================
 # Streamlit ZLEMA Bollinger Multi-Coin Dashboard (4H Overlay)
-# On-demand incremental fetching + Bollinger Bands + Telegram Alerts
 # ============================================================
 
 import logging
@@ -12,23 +11,20 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
-# Defensive internal imports (if they fail we show UI errors but app won't crash)
+# -------------------------------------
+# Internal imports (safe)
+# -------------------------------------
 try:
     from binance_integration import fetch_klines, get_secret
 except Exception as e:
-    logging.exception("Failed to import binance_integration: %s", e)
-
-    def fetch_klines(*args, **kwargs):
-        return pd.DataFrame()
-
-    def get_secret(k):
-        return None
+    st.error(f"Binance integration import failed: {e}")
+    def fetch_klines(*args, **kwargs): return pd.DataFrame()
+    def get_secret(k): return None
 
 try:
     from candle_evaluator import evaluate_candles
 except Exception:
-    def evaluate_candles(df, phase, trend):
-        return df
+    def evaluate_candles(df, phase, trend): return df
 
 try:
     from zlema_bbands_trading import (
@@ -49,7 +45,7 @@ except Exception:
 # CONFIGURATION
 # --------------------------
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT", "DOGEUSDT", "LTCUSDT",
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT", "DOGEUSDT",
     "ADAUSDT", "AVAXUSDT", "DOTUSDT", "TRXUSDT", "LINKUSDT", "MATICUSDT",
     "INJUSDT", "SUIUSDT", "PEPEUSDT", "SHIBUSDT", "WLDUSDT"
 ]
@@ -58,7 +54,7 @@ DAYS = 30
 
 st.set_page_config(page_title="ZLEMA Bollinger Multi-Coin Dashboard", layout="wide")
 st.title("ZLEMA Bollinger Multi-Coin Dashboard")
-st.caption("On-demand incremental fetching with Bollinger Bands, 4H Overlay, and Telegram Alerts.")
+st.caption("Stable version with automatic endpoint fallback and data validation.")
 
 # --------------------------
 # SIDEBAR SETTINGS
@@ -66,69 +62,53 @@ st.caption("On-demand incremental fetching with Bollinger Bands, 4H Overlay, and
 with st.sidebar:
     st.header("Control Panel")
     selected_coin = st.selectbox("Select Coin to Configure", SYMBOLS, index=0)
-
-    st.subheader(f"Settings — {selected_coin}")
     phase = st.selectbox("Phase", ["Uptrend", "Downtrend", "Sideways"], index=2)
     trend = st.selectbox("Trend", ["Uptrend", "Downtrend", "Sideways"], index=2)
-    monitor_active = st.checkbox("Monitor this coin (activate for scanning)")
-
-    st.divider()
-    if st.button("Analyze Active Coins Now"):
-        st.session_state["analyze_now"] = True
     if st.button("Test Telegram Alert"):
         st.session_state["test_alert"] = True
+    st.divider()
+    st.caption("Use Refresh button if data missing or outdated.")
 
 # --------------------------
-# SAFE FETCH WRAPPER
+# FETCH & VALIDATE DATA
 # --------------------------
-def safe_fetch(symbol: str, interval: str = INTERVAL, days: int = DAYS):
-    """
-    Wraps fetch_klines with simple retries and returns a DataFrame (possibly empty).
-    """
-    attempts = 3
-    for i in range(attempts):
-        try:
-            df = fetch_klines(symbol=symbol, interval=interval, days=days)
-            if df is None:
-                df = pd.DataFrame()
-            # Quick validation
-            if isinstance(df, pd.DataFrame) and not df.empty and {"open", "high", "low", "close"}.issubset(df.columns):
-                return df.copy()
-            # If df empty, try again after a small pause (endpoint fallback may be settling)
-            time.sleep(1.0 + i * 0.5)
-        except Exception as e:
-            logging.exception("safe_fetch attempt failed: %s", e)
-            time.sleep(1.0 + i * 0.5)
-    # final try: return whatever we got (likely empty)
-    return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+def safe_fetch(symbol, interval, days):
+    """Fetch klines safely, always return DataFrame."""
+    try:
+        df = fetch_klines(symbol=symbol, interval=interval, days=days)
+        if not isinstance(df, pd.DataFrame):
+            return pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        st.error(f"Failed to fetch {symbol}: {e}")
+        return pd.DataFrame()
 
-# --------------------------
-# MAIN UI & Fetch
-# --------------------------
-st.subheader(f"Detailed Chart — {selected_coin}")
-
-if st.button(f"Refresh selected coin data ({selected_coin})"):
-    # Clear Streamlit cache so fetch_klines will re-run (if using st.cache_data)
+if st.button(f"Refresh {selected_coin} data"):
     try:
         st.cache_data.clear()
     except Exception:
         pass
 
-with st.spinner(f"Fetching {selected_coin} data from Binance..."):
-    df = safe_fetch(selected_coin, interval=INTERVAL, days=DAYS)
+with st.spinner(f"Fetching {selected_coin} data..."):
+    df = safe_fetch(selected_coin, INTERVAL, DAYS)
 
-if df is None or df.empty:
-    st.warning(f"No valid data found for {selected_coin}. Try refreshing again later.")
+# Guarantee df is DataFrame even if failed
+if not isinstance(df, pd.DataFrame):
+    df = pd.DataFrame()
+
+if df.empty or not {"open", "high", "low", "close"}.issubset(df.columns):
+    st.error(f"No valid OHLC data for {selected_coin}. Check Binance API or try again.")
     st.stop()
 
 # --------------------------
-# COMPUTE INDICATORS (pass phase & trend where required)
+# COMPUTE INDICATORS
 # --------------------------
 try:
     df = compute_indicators(df)
     df = compute_adaptive_pct(df)
     df = compute_4h_overlay(df)
-    # apply_zones requires phase & trend in your codebase
     df = apply_zones(df, phase, trend)
     df = evaluate_candles(df, phase, trend)
     df = validate_trend(df)
@@ -137,93 +117,72 @@ except Exception as e:
     st.stop()
 
 # --------------------------
-# VALIDATE DF BEFORE PLOTTING
-# --------------------------
-if df is None or df.empty or not {"open", "high", "low", "close"}.issubset(df.columns):
-    # Helpful debug info for you
-    st.error(f"Invalid or empty data returned for {selected_coin}. Columns: {list(df.columns)} Shape: {df.shape}")
-    # Show last few lines if present
-    if isinstance(df, pd.DataFrame) and not df.empty:
-        st.write(df.tail())
-    st.stop()
-
-# --------------------------
 # PLOTLY CHART
 # --------------------------
-fig = go.Figure()
-
-fig.add_trace(
-    go.Candlestick(
+try:
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
         x=df.index,
         open=df["open"],
         high=df["high"],
         low=df["low"],
         close=df["close"],
         name="Price",
+    ))
+
+    if "upper_band" in df.columns and "lower_band" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["upper_band"], name="Upper Band", line=dict(width=1)))
+        fig.add_trace(go.Scatter(x=df.index, y=df["lower_band"], name="Lower Band", line=dict(width=1)))
+
+    if "zlema" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["zlema"], name="ZLEMA", line=dict(width=2)))
+
+    fig.update_layout(
+        title=f"{selected_coin} — ZLEMA Bollinger Overlay",
+        xaxis_title="Time",
+        yaxis_title="Price (USDT)",
+        xaxis_rangeslider_visible=False,
+        template="plotly_dark",
+        height=600,
     )
-)
-
-# Optional overlays
-if "upper_band" in df.columns and "lower_band" in df.columns:
-    fig.add_trace(go.Scatter(x=df.index, y=df["upper_band"], name="Upper Band", line=dict(width=1)))
-    fig.add_trace(go.Scatter(x=df.index, y=df["lower_band"], name="Lower Band", line=dict(width=1)))
-
-if "zlema" in df.columns:
-    fig.add_trace(go.Scatter(x=df.index, y=df["zlema"], name="ZLEMA", line=dict(width=2)))
-
-fig.update_layout(
-    title=f"{selected_coin} — ZLEMA Bollinger Overlay",
-    xaxis_title="Time",
-    yaxis_title="Price (USDT)",
-    xaxis_rangeslider_visible=False,
-    template="plotly_dark",
-    height=600,
-)
-st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
+except Exception as e:
+    st.error(f"Chart rendering failed: {e}")
+    st.stop()
 
 # --------------------------
 # SUMMARY TABLE
 # --------------------------
-st.subheader("Summary Table (Active Coins)")
-summary_data = [
-    {"Coin": selected_coin, "Phase": phase, "Trend": trend, "Last Price": float(df['close'].iloc[-1])}
-]
-st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+try:
+    st.subheader("Summary")
+    last_price = float(df["close"].iloc[-1])
+    st.dataframe(pd.DataFrame([{
+        "Coin": selected_coin,
+        "Phase": phase,
+        "Trend": trend,
+        "Last Price": last_price,
+    }]), use_container_width=True)
+except Exception as e:
+    st.error(f"Summary section failed: {e}")
 
 # --------------------------
-# TELEGRAM ALERT TEST (optional)
+# TELEGRAM ALERT TEST
 # --------------------------
 if st.session_state.get("test_alert", False):
     bot_token = get_secret("TELEGRAM_BOT_TOKEN")
     chat_id = get_secret("TELEGRAM_CHAT_ID")
 
     if not bot_token or not chat_id:
-        st.warning("Telegram credentials not found in Streamlit secrets.")
+        st.warning("Telegram credentials missing.")
     else:
-        message = f"Test alert: Dashboard is running for {selected_coin}."
         try:
+            message = f"Test alert: {selected_coin} data loaded successfully."
             r = requests.get(
                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
                 params={"chat_id": chat_id, "text": message},
                 timeout=8,
             )
             r.raise_for_status()
-            st.success("Test alert sent successfully.")
+            st.success("Telegram alert sent successfully.")
         except Exception as e:
-            st.error(f"Failed to send Telegram alert: {e}")
-
-# --------------------------
-# ANALYZE ACTIVE COINS (light)
-# --------------------------
-if st.session_state.get("analyze_now", False):
-    st.info("Running quick scan on a subset of symbols...")
-    active_summary = []
-    for sym in SYMBOLS[:8]:
-        dfsym = safe_fetch(sym, interval=INTERVAL, days=7)
-        if dfsym is None or dfsym.empty:
-            active_summary.append({"Coin": sym, "Status": "No data"})
-            continue
-        last_price = float(dfsym["close"].iloc[-1]) if "close" in dfsym.columns else None
-        active_summary.append({"Coin": sym, "Status": "OK", "Last Price": last_price})
-    st.dataframe(pd.DataFrame(active_summary), use_container_width=True)
-    st.session_state["analyze_now"] = False
+            st.error(f"Telegram error: {e}")
