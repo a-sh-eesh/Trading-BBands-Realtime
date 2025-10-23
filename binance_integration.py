@@ -1,5 +1,6 @@
 # ============================================================
 # Binance Integration (Public REST API – Streamlit Compatible)
+# Incremental and Full Fetch Support
 # ============================================================
 
 import os
@@ -26,40 +27,47 @@ def get_secret(key):
         return st.secrets["general"][key]
     return os.getenv(key)
 
-# Load keys (kept for compatibility, not required for public API)
-BINANCE_API_KEY = get_secret("BINANCE_API_KEY")
-BINANCE_API_SECRET = get_secret("BINANCE_API_SECRET")
-
 # ------------------------------------------------------------
-# Fetch Historical Klines (Public API only)
+# Fetch Historical + Incremental Klines (Public API only)
 # ------------------------------------------------------------
-def fetch_klines(symbol="BTCUSDT", interval="1h", days=30):
+def fetch_klines(symbol="BTCUSDT", interval="1h", days=30, start_time=None, end_time=None):
     """
-    Fetch historical candlestick (kline) data using Binance's public REST API.
-    Works globally without needing API keys or authentication.
+    Fetch candlestick (kline) data from Binance REST API.
+    Supports both full (days-based) and incremental (start_time/end_time) fetching.
 
     Args:
         symbol (str): Trading pair, e.g., "BTCUSDT"
         interval (str): Candle interval, e.g., "1h", "4h", "1d"
-        days (int): Approx number of days to fetch (limited to 1000 candles)
+        days (int): Number of days to fetch if no start/end time is given
+        start_time (datetime, optional): UTC datetime to start fetching from
+        end_time (datetime, optional): UTC datetime to end fetching at
 
     Returns:
-        pd.DataFrame: DataFrame with columns ['open_time', 'open', 'high', 'low', 'close', 'volume']
+        pd.DataFrame: Columns ['open_time', 'open', 'high', 'low', 'close', 'volume']
     """
     try:
-        # Binance allows up to 1000 candles per request
-        limit = min(days * 24, 1000)
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        base_url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": symbol, "interval": interval, "limit": 1000}
 
-        response = requests.get(url, timeout=10)
+        # If incremental fetch requested, convert times to ms timestamps
+        if start_time:
+            params["startTime"] = int(pd.Timestamp(start_time).timestamp() * 1000)
+        if end_time:
+            params["endTime"] = int(pd.Timestamp(end_time).timestamp() * 1000)
+
+        # If no start_time, fallback to days-based limit
+        if not start_time and days:
+            limit = min(days * 24, 1000)
+            params["limit"] = limit
+
+        response = requests.get(base_url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
 
         if not data or len(data) == 0:
-            print(f"No data returned for {symbol}.")
+            print(f"[{symbol}] No klines returned.")
             return pd.DataFrame()
 
-        # Convert API response into DataFrame
         df = pd.DataFrame(
             data,
             columns=[
@@ -69,15 +77,12 @@ def fetch_klines(symbol="BTCUSDT", interval="1h", days=30):
             ],
         )
 
-        # Convert datatypes
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
         numeric_cols = ["open", "high", "low", "close", "volume"]
         df[numeric_cols] = df[numeric_cols].astype(float)
-
-        # Return the key columns expected by your trading system
         df = df[["open_time", "open", "high", "low", "close", "volume"]]
 
-        print(f"Data fetched successfully for {symbol} ({len(df)} rows).")
+        print(f"[{symbol}] Fetched {len(df)} candles ({interval}).")
         return df
 
     except Exception as e:
