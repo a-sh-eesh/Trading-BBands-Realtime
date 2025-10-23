@@ -1,3 +1,7 @@
+# ============================================================
+# Binance Integration (Stable & Streamlit-compatible)
+# ============================================================
+
 import os
 import time
 import pandas as pd
@@ -5,89 +9,92 @@ import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# Optional Streamlit import for reading secrets
 try:
     import streamlit as st
 except ImportError:
     st = None
 
-# ------------------------------------------------------------
-# Load environment variables and Streamlit secrets
-# ------------------------------------------------------------
 load_dotenv()
 
+# ------------------------------------------------------------
+# Helper: Get secret values
+# ------------------------------------------------------------
 def get_secret(key):
-    """Get value from Streamlit secrets or .env file."""
-    if st and "general" in st.secrets and key in st.secrets["general"]:
-        return st.secrets["general"][key]
+    """Get value from Streamlit secrets or .env."""
+    if st and hasattr(st, "secrets"):
+        try:
+            if key in st.secrets.get("general", {}):
+                return st.secrets["general"][key]
+        except Exception:
+            pass
     return os.getenv(key)
 
+
 # ------------------------------------------------------------
-# Fetch Historical + Incremental Klines (Public API)
+# Binance Data Fetcher
 # ------------------------------------------------------------
-def fetch_klines(symbol="BTCUSDT", interval="1h", days=30, start_time=None, end_time=None):
+BASE_URL = "https://api.binance.com/api/v3/klines"
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
+def fetch_klines(symbol="BTCUSDT", interval="1h", days=30, incremental=False, last_timestamp=None):
     """
-    Fetch candlestick (kline) data from Binance REST API.
-    Supports both full (days-based) and incremental (start_time/end_time) fetching.
-    Returns guaranteed columns ['open_time', 'open', 'high', 'low', 'close', 'volume'].
+    Fetch historical or incremental kline data using Binance public REST API.
+
+    Args:
+        symbol (str): Trading pair.
+        interval (str): Candle interval, e.g., '1h'.
+        days (int): Number of days for full history.
+        incremental (bool): Fetch only the last few candles if True.
+        last_timestamp (int): Last fetched candle close time (ms).
+
+    Returns:
+        pd.DataFrame: Kline data with datetime index.
     """
     try:
-        base_url = "https://api.binance.com/api/v3/klines"
-        params = {"symbol": symbol.upper(), "interval": interval, "limit": 1000}
+        if incremental and last_timestamp:
+            start_time = last_timestamp
+        else:
+            start_time = int((datetime.utcnow() - timedelta(days=days)).timestamp() * 1000)
 
-        # If incremental fetch requested, convert times to ms timestamps
-        if start_time:
-            params["startTime"] = int(pd.Timestamp(start_time).timestamp() * 1000)
-        if end_time:
-            params["endTime"] = int(pd.Timestamp(end_time).timestamp() * 1000)
+        params = {
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "startTime": start_time,
+            "limit": 1000,
+        }
 
-        # Default days fetch (if no incremental range given)
-        if not start_time and days:
-            limit = min(days * 24, 1000)
-            params["limit"] = limit
-
-        response = requests.get(base_url, params=params, timeout=15)
+        response = requests.get(BASE_URL, params=params, timeout=10)
         response.raise_for_status()
+
         data = response.json()
+        if not isinstance(data, list) or len(data) == 0:
+            return pd.DataFrame()
 
-        # Handle empty or invalid response
-        if not data or len(data) == 0:
-            print(f"[{symbol}] No data returned from Binance API.")
-            return pd.DataFrame(columns=["open_time", "open", "high", "low", "close", "volume"])
+        df = pd.DataFrame(
+            data,
+            columns=[
+                "open_time", "open", "high", "low", "close", "volume",
+                "close_time", "quote_asset_volume", "num_trades",
+                "taker_buy_base", "taker_buy_quote", "ignore"
+            ],
+        )
 
-        # Convert to DataFrame
-        df = pd.DataFrame(data)
-        if df.shape[1] < 6:
-            print(f"[{symbol}] Unexpected Binance data structure: {df.shape}")
-            return pd.DataFrame(columns=["open_time", "open", "high", "low", "close", "volume"])
+        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
+        df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
+        df = df.astype({
+            "open": "float", "high": "float", "low": "float", "close": "float", "volume": "float"
+        })
+        df.set_index("close_time", inplace=True)
+        df.sort_index(inplace=True)
 
-        # Explicitly assign columns
-        df.columns = [
-            "open_time", "open", "high", "low", "close", "volume",
-            "close_time", "quote_asset_volume", "num_trades",
-            "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore"
-        ]
-
-        # Convert datatypes
-        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
-        numeric_cols = ["open", "high", "low", "close", "volume"]
-        df[numeric_cols] = df[numeric_cols].astype(float)
-
-        # Keep only the needed columns
-        df = df[["open_time", "open", "high", "low", "close", "volume"]]
-
-        print(f"[{symbol}] Data fetched successfully: {len(df)} candles.")
         return df
 
+    except requests.exceptions.RequestException as e:
+        if st:
+            st.error(f"Binance API error: {e}")
+        return pd.DataFrame()
     except Exception as e:
-        print(f"❌ Binance fetch failed for {symbol}: {e}")
-        time.sleep(2)
-        return pd.DataFrame(columns=["open_time", "open", "high", "low", "close", "volume"])
-
-# ------------------------------------------------------------
-# Optional: Local test (run this file alone to verify data)
-# ------------------------------------------------------------
-if _name_ == "_main_":
-    symbol = "BTCUSDT"
-    df = fetch_klines(symbol=symbol, interval="1h", days=10)
-    print(df.tail())
+        if st:
+            st.error(f"Unexpected error while fetching {symbol}: {e}")
+        return pd.DataFrame()
