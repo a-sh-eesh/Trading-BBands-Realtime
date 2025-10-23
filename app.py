@@ -54,7 +54,10 @@ SLEEP_BETWEEN_BATCHES = 3
 # TELEGRAM ALERTS (Updated)
 # --------------------------
 def send_telegram_alert(message: str):
-    """Sends a Telegram alert using Streamlit secrets or .env variables."""
+    """
+    Sends a Telegram alert using Streamlit secrets or .env variables.
+    Works both locally and on Streamlit Cloud.
+    """
     try:
         token = get_secret("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_TOKEN")
         chat_id = get_secret("TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
@@ -120,34 +123,22 @@ if time.time() - st.session_state["last_refresh"] > AUTO_REFRESH_SECONDS:
 
 
 # --------------------------
-# DATA FETCH (Improved)
+# DATA FETCH (On-Demand + Incremental)
 # --------------------------
 def get_symbol_data(symbol: str):
     """Fetch 30 days initially, then 1 hour incrementally per coin."""
     cache = st.session_state["symbol_data"]
     now = pd.Timestamp.utcnow()
 
-    # Initial 30-day fetch
     if symbol not in cache or cache[symbol] is None or cache[symbol].empty:
         df = fetch_klines(symbol, interval="1h", days=FETCH_DAYS)
-        if df is None or df.empty:
-            print(f"[{symbol}] Initial fetch returned no data.")
-            return pd.DataFrame(), False
-
-        if "open_time" not in df.columns:
-            df.columns = ["open_time", "open", "high", "low", "close", "volume"]
-
-        df["open_time"] = pd.to_datetime(df["open_time"])
         cache[symbol] = df
-        print(f"[{symbol}] Initial 30-day data loaded ({len(df)} rows).")
         return df, True
 
-    # Incremental 1-hour fetch
     df_old = cache[symbol]
     try:
         last_time = pd.to_datetime(df_old["open_time"].max())
     except Exception:
-        print(f"[{symbol}] Invalid cache, refetching 30 days.")
         df = fetch_klines(symbol, interval="1h", days=FETCH_DAYS)
         cache[symbol] = df
         return df, True
@@ -156,18 +147,12 @@ def get_symbol_data(symbol: str):
     df_new = fetch_klines(symbol, interval="1h", start_time=start_time, end_time=now)
 
     if df_new is not None and not df_new.empty:
-        if "open_time" not in df_new.columns:
-            df_new.columns = ["open_time", "open", "high", "low", "close", "volume"]
-
-        df_new["open_time"] = pd.to_datetime(df_new["open_time"])
         df = pd.concat([df_old, df_new]).drop_duplicates(subset=["open_time"]).sort_values("open_time")
         df = df[df["open_time"] >= (now - timedelta(days=FETCH_DAYS))]
         cache[symbol] = df
-        print(f"[{symbol}] Added {len(df_new)} new rows. Total now: {len(df)} rows.")
         return df, True
-    else:
-        print(f"[{symbol}] No new candles yet. Using cached data.")
-        return df_old, False
+
+    return df_old, False
 
 
 # --------------------------
@@ -197,6 +182,7 @@ st.sidebar.markdown("---")
 if st.sidebar.button("Analyze Active Coins Now"):
     st.session_state["trigger_analysis"] = True
 
+# Test Telegram connection button
 if st.sidebar.button("Test Telegram Alert"):
     success = send_telegram_alert("Test alert from your Streamlit ZLEMA system.")
     if success:
@@ -230,7 +216,6 @@ def analyze_active_coins():
             progress.progress(int(i / total * 100))
             df, updated = get_symbol_data(symbol)
             if df is None or df.empty:
-                print(f"[{symbol}] Skipped: No data available.")
                 continue
 
             df["open_time"] = pd.to_datetime(df["open_time"])
@@ -318,141 +303,139 @@ if st.button(f"Refresh selected coin data ({selected_symbol})"):
 else:
     df = st.session_state["symbol_data"].get(selected_symbol, pd.DataFrame())
 
-# ✅ Guard before plotting
-if df is None or df.empty or "open_time" not in df.columns:
-    st.warning(f"No valid data found for {selected_symbol}. Try refreshing or wait for the next candle.")
-    st.stop()
+if df is None or df.empty:
+    st.warning(f"No data for {selected_symbol}. Click 'Refresh selected coin data' to fetch 30 days now.")
+else:
+    phase = st.session_state.get(f"{selected_symbol}_phase", "Sideways")
+    trend = validate_trend(st.session_state.get(f"{selected_symbol}_trend", "Sideways"))
 
-phase = st.session_state.get(f"{selected_symbol}_phase", "Sideways")
-trend = validate_trend(st.session_state.get(f"{selected_symbol}_trend", "Sideways"))
+    df = compute_indicators(df)
+    df = compute_adaptive_pct(df)
+    df = compute_4h_overlay(df)
+    df = apply_zones(df, phase, trend)
+    df = evaluate_candles(df, phase, trend)
 
-df = compute_indicators(df)
-df = compute_adaptive_pct(df)
-df = compute_4h_overlay(df)
-df = apply_zones(df, phase, trend)
-df = evaluate_candles(df, phase, trend)
+    latest = df.iloc[-1]
+    st.write(f"Last Signal: {latest.get('entry_signal', 'NONE')} | Updated: {latest['open_time']}")
 
-latest = df.iloc[-1]
-st.write(f"Last Signal: {latest.get('entry_signal', 'NONE')} | Updated: {latest['open_time']}")
-st.caption(f"Last Candle Time (UTC): {df['open_time'].iloc[-1]}")
+    # --- CHART ---
+    fig = go.Figure()
 
-# --- CHART ---
-fig = go.Figure()
+    # 4H Overlay Bands
+    if all(col in df.columns for col in ["upper_band_4h", "lower_band_4h", "zlema_4h"]):
+        df_4h = df.dropna(subset=["upper_band_4h", "lower_band_4h"])
+        if not df_4h.empty:
+            fig.add_trace(go.Scatter(
+                x=df_4h["open_time"],
+                y=df_4h["upper_band_4h"],
+                mode="lines",
+                line=dict(width=1, color="violet"),
+                name="4H Upper Band"
+            ))
+            fig.add_trace(go.Scatter(
+                x=df_4h["open_time"],
+                y=df_4h["lower_band_4h"],
+                mode="lines",
+                line=dict(width=1, color="violet"),
+                name="4H Lower Band",
+                fill="tonexty",
+                fillcolor="rgba(138,43,226,0.08)"
+            ))
+            fig.add_trace(go.Scatter(
+                x=df_4h["open_time"],
+                y=df_4h["zlema_4h"],
+                mode="lines",
+                line=dict(color="violet", width=1.2, dash="dot"),
+                name="ZLEMA 4H"
+            ))
 
-# 4H Overlay Bands
-if all(col in df.columns for col in ["upper_band_4h", "lower_band_4h", "zlema_4h"]):
-    df_4h = df.dropna(subset=["upper_band_4h", "lower_band_4h"])
-    if not df_4h.empty:
+    # 1H Bollinger Bands (lines only)
+    if "upper_band" in df.columns and "lower_band" in df.columns:
+        df_boll = df.dropna(subset=["upper_band", "lower_band"]).copy()
+        if not df_boll.empty:
+            fig.add_trace(go.Scatter(
+                x=df_boll["open_time"],
+                y=df_boll["upper_band"],
+                mode="lines",
+                line=dict(width=1, color="cornflowerblue"),
+                name="1H Upper Band"
+            ))
+            fig.add_trace(go.Scatter(
+                x=df_boll["open_time"],
+                y=df_boll["lower_band"],
+                mode="lines",
+                line=dict(width=1, color="cornflowerblue"),
+                name="1H Lower Band"
+            ))
+
+    # ZLEMA
+    if "zlema" in df.columns:
         fig.add_trace(go.Scatter(
-            x=df_4h["open_time"],
-            y=df_4h["upper_band_4h"],
-            mode="lines",
-            line=dict(width=1, color="violet"),
-            name="4H Upper Band"
-        ))
-        fig.add_trace(go.Scatter(
-            x=df_4h["open_time"],
-            y=df_4h["lower_band_4h"],
-            mode="lines",
-            line=dict(width=1, color="violet"),
-            name="4H Lower Band",
-            fill="tonexty",
-            fillcolor="rgba(138,43,226,0.08)"
-        ))
-        fig.add_trace(go.Scatter(
-            x=df_4h["open_time"],
-            y=df_4h["zlema_4h"],
-            mode="lines",
-            line=dict(color="violet", width=1.2, dash="dot"),
-            name="ZLEMA 4H"
+            x=df["open_time"], y=df["zlema"],
+            mode="lines", name="ZLEMA (1H)",
+            line=dict(color="orange", width=1.4)
         ))
 
-# 1H Bollinger Bands (lines only)
-if "upper_band" in df.columns and "lower_band" in df.columns:
-    df_boll = df.dropna(subset=["upper_band", "lower_band"]).copy()
-    if not df_boll.empty:
-        fig.add_trace(go.Scatter(
-            x=df_boll["open_time"],
-            y=df_boll["upper_band"],
-            mode="lines",
-            line=dict(width=1, color="cornflowerblue"),
-            name="1H Upper Band"
-        ))
-        fig.add_trace(go.Scatter(
-            x=df_boll["open_time"],
-            y=df_boll["lower_band"],
-            mode="lines",
-            line=dict(width=1, color="cornflowerblue"),
-            name="1H Lower Band"
-        ))
-
-# ZLEMA
-if "zlema" in df.columns:
-    fig.add_trace(go.Scatter(
-        x=df["open_time"], y=df["zlema"],
-        mode="lines", name="ZLEMA (1H)",
-        line=dict(color="orange", width=1.4)
+    # Candlesticks
+    fig.add_trace(go.Candlestick(
+        x=df["open_time"],
+        open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+        name="Candles"
     ))
 
-# Candlesticks
-fig.add_trace(go.Candlestick(
-    x=df["open_time"],
-    open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-    name="Candles"
-))
+    # Zones
+    if phase != "TTR" and all(col in df.columns for col in ["buy_zone_lower", "buy_zone_upper"]):
+        df_buy = df.dropna(subset=["buy_zone_lower", "buy_zone_upper"])
+        if not df_buy.empty:
+            fig.add_trace(go.Scatter(
+                x=pd.concat([df_buy["open_time"], df_buy["open_time"][::-1]]),
+                y=pd.concat([df_buy["buy_zone_lower"], df_buy["buy_zone_upper"][::-1]]),
+                fill="toself", fillcolor="rgba(0,255,0,0.08)",
+                line=dict(width=0), name="Buy Zone"
+            ))
 
-# Zones
-if phase != "TTR" and all(col in df.columns for col in ["buy_zone_lower", "buy_zone_upper"]):
-    df_buy = df.dropna(subset=["buy_zone_lower", "buy_zone_upper"])
-    if not df_buy.empty:
-        fig.add_trace(go.Scatter(
-            x=pd.concat([df_buy["open_time"], df_buy["open_time"][::-1]]),
-            y=pd.concat([df_buy["buy_zone_lower"], df_buy["buy_zone_upper"][::-1]]),
-            fill="toself", fillcolor="rgba(0,255,0,0.08)",
-            line=dict(width=0), name="Buy Zone"
-        ))
+    if phase != "TTR" and all(col in df.columns for col in ["sell_zone_lower", "sell_zone_upper"]):
+        df_sell = df.dropna(subset=["sell_zone_lower", "sell_zone_upper"])
+        if not df_sell.empty:
+            fig.add_trace(go.Scatter(
+                x=pd.concat([df_sell["open_time"], df_sell["open_time"][::-1]]),
+                y=pd.concat([df_sell["sell_zone_lower"], df_sell["sell_zone_upper"][::-1]]),
+                fill="toself", fillcolor="rgba(255,0,0,0.08)",
+                line=dict(width=0), name="Sell Zone"
+            ))
 
-if phase != "TTR" and all(col in df.columns for col in ["sell_zone_lower", "sell_zone_upper"]):
-    df_sell = df.dropna(subset=["sell_zone_lower", "sell_zone_upper"])
-    if not df_sell.empty:
-        fig.add_trace(go.Scatter(
-            x=pd.concat([df_sell["open_time"], df_sell["open_time"][::-1]]),
-            y=pd.concat([df_sell["sell_zone_lower"], df_sell["sell_zone_upper"][::-1]]),
-            fill="toself", fillcolor="rgba(255,0,0,0.08)",
-            line=dict(width=0), name="Sell Zone"
-        ))
+    # Entry markers
+    if "entry_signal" in df.columns:
+        buys = df[df["entry_signal"] == "BUY"]
+        sells = df[df["entry_signal"] == "SELL"]
 
-# Entry markers
-if "entry_signal" in df.columns:
-    buys = df[df["entry_signal"] == "BUY"]
-    sells = df[df["entry_signal"] == "SELL"]
+        if not buys.empty:
+            fig.add_trace(go.Scatter(
+                x=buys["open_time"], y=buys["low"] * 0.995,
+                mode="markers", marker=dict(symbol="triangle-up", color="lime", size=9),
+                name="BUY Signal"
+            ))
+        if not sells.empty:
+            fig.add_trace(go.Scatter(
+                x=sells["open_time"], y=sells["high"] * 1.005,
+                mode="markers", marker=dict(symbol="triangle-down", color="red", size=9),
+                name="SELL Signal"
+            ))
 
-    if not buys.empty:
-        fig.add_trace(go.Scatter(
-            x=buys["open_time"], y=buys["low"] * 0.995,
-            mode="markers", marker=dict(symbol="triangle-up", color="lime", size=9),
-            name="BUY Signal"
-        ))
-    if not sells.empty:
-        fig.add_trace(go.Scatter(
-            x=sells["open_time"], y=sells["high"] * 1.005,
-            mode="markers", marker=dict(symbol="triangle-down", color="red", size=9),
-            name="SELL Signal"
-        ))
-
-fig.update_layout(
-    template="plotly_dark",
-    height=550,
-    xaxis_rangeslider_visible=False,
-    showlegend=True,
-    legend=dict(
-        orientation="h",
-        yanchor="bottom", y=1.02,
-        xanchor="right", x=1
+    # Layout
+    fig.update_layout(
+        template="plotly_dark",
+        height=550,
+        xaxis_rangeslider_visible=False,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom", y=1.02,
+            xanchor="right", x=1
+        )
     )
-)
 
-st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("---")
 st.caption("ZLEMA Bollinger System © 2025 — On-demand Fetch + Bollinger + 4H Overlay + Telegram Alerts")
