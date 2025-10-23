@@ -92,3 +92,40 @@ if __name__ == "__main__":
     symbol = "BTCUSDT"
     df = fetch_klines(symbol=symbol, interval="1h", days=10)
     print(df.tail())
+
+
+# ------------------------------------------------------------
+# Incremental Fetch (Fetch candles after last open_time)
+# ------------------------------------------------------------
+def fetch_klines_incremental(symbol="BTCUSDT", interval="1h", since=None, limit=500):
+    """Fetch only candles newer than the given timestamp."""
+    try:
+        base_url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        if since:
+            params["startTime"] = int(since.timestamp() * 1000)
+
+        response = requests.get(base_url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            print(f"No incremental data found for {symbol}.")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(
+            data,
+            columns=[
+                "open_time", "open", "high", "low", "close", "volume",
+                "close_time", "quote_asset_volume", "num_trades",
+                "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore",
+            ],
+        )
+        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
+        df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
+        df = df[["open_time", "open", "high", "low", "close", "volume"]]
+        print(f"Incremental data fetched for {symbol}: {len(df)} new rows.")
+        return df
+
+    except Exception as e:
+        print(f"fetch_klines_incremental() failed for {symbol}: {e}")
+        return pd.DataFrame()
