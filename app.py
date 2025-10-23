@@ -129,7 +129,21 @@ def get_symbol_data(symbol: str):
 
     # Initial 30-day fetch
     if symbol not in cache or cache[symbol] is None or cache[symbol].empty:
-        df = fetch_klines(symbol, interval="1h", days=FETCH_DAYS)
+        # Try loading cached data from session
+if "data_cache" not in st.session_state:
+    st.session_state["data_cache"] = {}
+
+df_old = st.session_state["data_cache"].get(symbol)
+
+if df_old is None or df_old.empty:
+    df = fetch_klines(symbol, interval="1h", days=30)
+else:
+    last_time = df_old["open_time"].max()
+    new_df = fetch_klines_incremental(symbol, interval="1h", since=last_time)
+    df = pd.concat([df_old, new_df]).drop_duplicates(subset=["open_time"]).reset_index(drop=True)
+
+# Store updated data
+st.session_state["data_cache"][symbol] = df
         if df is None or df.empty:
             print(f"[{symbol}] Initial fetch returned no data.")
             return pd.DataFrame(), False
