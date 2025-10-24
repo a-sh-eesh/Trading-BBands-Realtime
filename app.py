@@ -120,14 +120,14 @@ if time.time() - st.session_state["last_refresh"] > AUTO_REFRESH_SECONDS:
 
 
 # --------------------------
-# DATA FETCH (Improved)
+# DATA FETCH (Improved + Fixed + Enhanced Logging)
 # --------------------------
 def get_symbol_data(symbol: str):
-    """Fetch 30 days initially, then 1 hour incrementally per coin."""
+    """Fetch 30 days initially, then 1 hour incrementally per coin (fixed + detailed logs)."""
     cache = st.session_state["symbol_data"]
     now = pd.Timestamp.utcnow()
 
-    # Initial 30-day fetch
+    # ---- Initial 30-day fetch ----
     if symbol not in cache or cache[symbol] is None or cache[symbol].empty:
         df = fetch_klines(symbol, interval="1h", days=FETCH_DAYS)
         if df is None or df.empty:
@@ -142,7 +142,7 @@ def get_symbol_data(symbol: str):
         print(f"[{symbol}] Initial 30-day data loaded ({len(df)} rows).")
         return df, True
 
-    # Incremental 1-hour fetch
+    # ---- Incremental 1-hour fetch ----
     df_old = cache[symbol]
     try:
         last_time = pd.to_datetime(df_old["open_time"].max())
@@ -153,20 +153,38 @@ def get_symbol_data(symbol: str):
         return df, True
 
     start_time = last_time + timedelta(hours=1)
-    df_new = fetch_klines(symbol, interval="1h", start_time=start_time, end_time=now)
 
+    # Fixed incremental call using supported parameters
+    df_new = fetch_klines(
+        symbol,
+        interval="1h",
+        incremental=True,
+        last_timestamp=int(start_time.timestamp() * 1000)
+    )
+
+    # ---- Merge old + new ----
     if df_new is not None and not df_new.empty:
         if "open_time" not in df_new.columns:
             df_new.columns = ["open_time", "open", "high", "low", "close", "volume"]
 
         df_new["open_time"] = pd.to_datetime(df_new["open_time"])
-        df = pd.concat([df_old, df_new]).drop_duplicates(subset=["open_time"]).sort_values("open_time")
+        new_rows = len(df_new)
+        df = (
+            pd.concat([df_old, df_new])
+            .drop_duplicates(subset=["open_time"])
+            .sort_values("open_time")
+        )
         df = df[df["open_time"] >= (now - timedelta(days=FETCH_DAYS))]
         cache[symbol] = df
-        print(f"[{symbol}] Added {len(df_new)} new rows. Total now: {len(df)} rows.")
+
+        latest_time = df_new["open_time"].max()
+        print(f"[{symbol}] Incremental fetch successful: +{new_rows} rows added up to {latest_time}. Total rows: {len(df)}.")
+        st.session_state[f"{symbol}_last_update"] = f"{new_rows} new candles added (up to {latest_time})"
         return df, True
     else:
-        print(f"[{symbol}] No new candles yet. Using cached data.")
+        last_ts = df_old["open_time"].max()
+        print(f"[{symbol}] No new candles since {last_ts}. Using cached data ({len(df_old)} rows).")
+        st.session_state[f"{symbol}_last_update"] = f"No new data (last candle {last_ts})"
         return df_old, False
 
 
@@ -206,7 +224,6 @@ if st.sidebar.button("Test Telegram Alert"):
 
 st.sidebar.caption("Activate only coins you want monitored.")
 st.sidebar.caption("Telegram credentials must be added in Streamlit Secrets.")
-
 
 # --------------------------
 # ANALYSIS FUNCTION
