@@ -199,10 +199,22 @@ trend_key = f"{selected_symbol}_trend"
 active_key = f"{selected_symbol}_active"
 
 st.sidebar.subheader(f"Settings — {selected_symbol}")
-st.sidebar.selectbox("Phase", ["TTR", "BTR", "Sideways"],
-                     index=["TTR", "BTR", "Sideways"].index(st.session_state[phase_key]), key=phase_key)
-st.sidebar.selectbox("Trend", ["Bullish", "Bearish", "Sideways"],
-                     index=["Bullish", "Bearish", "Sideways"].index(st.session_state[trend_key]), key=trend_key)
+# --- Phase and Trend selectors (bound per-coin) ---
+st.sidebar.selectbox(
+    "Phase",
+    ["TTR", "BTR", "Sideways"],
+    index=["TTR", "BTR", "Sideways"].index(st.session_state.get(phase_key, "Sideways")),
+    key=phase_key,
+    help=f"Select trading phase for {selected_symbol}"
+)
+
+st.sidebar.selectbox(
+    "Trend",
+    ["Bullish", "Bearish", "Sideways"],
+    index=["Bullish", "Bearish", "Sideways"].index(st.session_state.get(trend_key, "Sideways")),
+    key=trend_key,
+    help=f"Select trend direction for {selected_symbol}"
+)
 
 monitor_toggle = st.sidebar.checkbox("Monitor this coin (activate for scanning)", value=st.session_state[active_key])
 st.session_state[active_key] = monitor_toggle
